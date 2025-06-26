@@ -1,0 +1,299 @@
+package snakegame;
+
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
+import javafx.application.Application;
+import javafx.geometry.Pos;
+import javafx.scene.Scene;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.control.*;
+import javafx.scene.input.KeyCode;
+import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
+import javafx.scene.paint.LinearGradient;
+import javafx.scene.paint.CycleMethod;
+import javafx.scene.paint.Stop;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
+import javafx.util.Duration;
+
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+
+public class SnakeGame extends Application {
+
+    private static final int WIDTH = 600;
+    private static final int HEIGHT = 400;
+    private static final int TILE_SIZE = 20;
+    private static final String HIGH_SCORE_FILE = "highscore.dat";
+
+    private Deque<Point> snake = new ArrayDeque<>();
+    private Point food;
+    private String direction = "RIGHT";
+    private boolean gameOver = false;
+    private boolean paused = false;
+
+    private int score = 0;
+    private int highScore = 0;
+
+    private Random rand = new Random();
+
+    private Timeline timeline;
+    private GraphicsContext gc;
+
+    @Override
+    public void start(Stage stage) {
+        Canvas canvas = new Canvas(WIDTH, HEIGHT);
+        gc = canvas.getGraphicsContext2D();
+
+        loadHighScore();
+
+        resetGame();
+
+        timeline = new Timeline(new KeyFrame(Duration.millis(150), e -> {
+            if (!gameOver && !paused) {
+                update();
+                draw();
+            }
+        }));
+        timeline.setCycleCount(Timeline.INDEFINITE);
+        timeline.play();
+
+        StackPane root = new StackPane(canvas);
+        Scene scene = new Scene(root);
+
+        scene.setOnKeyPressed(e -> {
+            KeyCode code = e.getCode();
+            switch (code) {
+                case UP:
+                    if (!direction.equals("DOWN")) direction = "UP";
+                    break;
+                case DOWN:
+                    if (!direction.equals("UP")) direction = "DOWN";
+                    break;
+                case LEFT:
+                    if (!direction.equals("RIGHT")) direction = "LEFT";
+                    break;
+                case RIGHT:
+                    if (!direction.equals("LEFT")) direction = "RIGHT";
+                    break;
+                case SPACE:
+                    paused = !paused;
+                    if (!paused) draw();  // refresh display on resume
+                    break;
+                case L:  // Show leaderboard on 'L' key press
+                    showLeaderboard(stage);
+                    break;
+                case R:  // Restart game on 'R'
+                    resetGame();
+                    break;
+            }
+        });
+
+        stage.setScene(scene);
+        stage.setTitle("Snake Game 🐍  | Score: 0  High Score: " + highScore);
+        stage.show();
+    }
+
+    private void resetGame() {
+        snake.clear();
+        snake.add(new Point(5, 5));
+        direction = "RIGHT";
+        gameOver = false;
+        paused = false;
+        score = 0;
+        generateFood();
+        draw();
+    }
+
+    private void update() {
+        Point head = snake.peekFirst();
+        Point newPoint = new Point(head.x, head.y);
+
+        switch (direction) {
+            case "UP": newPoint.y--; break;
+            case "DOWN": newPoint.y++; break;
+            case "LEFT": newPoint.x--; break;
+            case "RIGHT": newPoint.x++; break;
+        }
+
+        // Check wall collision or self collision
+        if (newPoint.x < 0 || newPoint.y < 0 || newPoint.x >= WIDTH / TILE_SIZE || newPoint.y >= HEIGHT / TILE_SIZE || snake.contains(newPoint)) {
+            gameOver = true;
+            saveHighScoreIfNeeded();
+            return;
+        }
+
+        snake.addFirst(newPoint);
+
+        if (newPoint.equals(food)) {
+            score++;
+            generateFood();
+        } else {
+            snake.removeLast(); // move forward
+        }
+    }
+
+    private void draw() {
+        // Clear background
+        gc.setFill(Color.BLACK);
+        gc.fillRect(0, 0, WIDTH, HEIGHT);
+
+        // Draw food
+        gc.setFill(Color.RED);
+        gc.fillOval(food.x * TILE_SIZE + 2, food.y * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+
+        // Gradient for snake body
+        LinearGradient gradient = new LinearGradient(
+                0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
+                new Stop(0, Color.LIMEGREEN.brighter()),
+                new Stop(1, Color.DARKGREEN)
+        );
+
+        // Draw snake body with rounded rects & alternating colors
+        int i = 0;
+        for (Point p : snake) {
+            if (i % 2 == 0) {
+                gc.setFill(gradient);
+            } else {
+                gc.setFill(Color.LIMEGREEN.darker());
+            }
+            gc.fillRoundRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE - 2, TILE_SIZE - 2, 10, 10);
+            i++;
+        }
+
+        // Draw snake head with eyes
+        Point head = snake.peekFirst();
+        gc.setFill(Color.GREENYELLOW);
+        gc.fillRoundRect(head.x * TILE_SIZE, head.y * TILE_SIZE, TILE_SIZE - 2, TILE_SIZE - 2, 10, 10);
+
+        // Draw eyes on head
+        gc.setFill(Color.WHITE);
+        double eyeSize = TILE_SIZE / 6.0;
+        double eyeOffsetX = TILE_SIZE / 4.0;
+        double eyeOffsetY = TILE_SIZE / 4.0;
+
+        switch (direction) {
+            case "UP":
+                gc.fillOval(head.x * TILE_SIZE + eyeOffsetX, head.y * TILE_SIZE + eyeOffsetY / 2, eyeSize, eyeSize);
+                gc.fillOval(head.x * TILE_SIZE + TILE_SIZE - eyeOffsetX - eyeSize, head.y * TILE_SIZE + eyeOffsetY / 2, eyeSize, eyeSize);
+                break;
+            case "DOWN":
+                gc.fillOval(head.x * TILE_SIZE + eyeOffsetX, head.y * TILE_SIZE + TILE_SIZE - eyeOffsetY - eyeSize / 2, eyeSize, eyeSize);
+                gc.fillOval(head.x * TILE_SIZE + TILE_SIZE - eyeOffsetX - eyeSize, head.y * TILE_SIZE + TILE_SIZE - eyeOffsetY - eyeSize / 2, eyeSize, eyeSize);
+                break;
+            case "LEFT":
+                gc.fillOval(head.x * TILE_SIZE + eyeOffsetX / 2, head.y * TILE_SIZE + eyeOffsetY, eyeSize, eyeSize);
+                gc.fillOval(head.x * TILE_SIZE + eyeOffsetX / 2, head.y * TILE_SIZE + TILE_SIZE - eyeOffsetY - eyeSize, eyeSize, eyeSize);
+                break;
+            case "RIGHT":
+                gc.fillOval(head.x * TILE_SIZE + TILE_SIZE - eyeOffsetX - eyeSize / 2, head.y * TILE_SIZE + eyeOffsetY, eyeSize, eyeSize);
+                gc.fillOval(head.x * TILE_SIZE + TILE_SIZE - eyeOffsetX - eyeSize / 2, head.y * TILE_SIZE + TILE_SIZE - eyeOffsetY - eyeSize, eyeSize, eyeSize);
+                break;
+        }
+
+        // Draw scores top left
+        gc.setFill(Color.WHITE);
+        gc.fillText("Score: " + score, 10, 20);
+        gc.fillText("High Score: " + highScore, 10, 40);
+
+        // Game Over Message
+        if (gameOver) {
+            gc.setFill(Color.WHITE);
+            gc.fillText("Game Over! Press R to restart.", WIDTH / 2.0 - 80, HEIGHT / 2.0);
+        }
+        // Pause Message
+        if (paused) {
+            gc.setFill(Color.YELLOW);
+            gc.fillText("Paused - Press Space to Resume", WIDTH / 2.0 - 100, HEIGHT / 2.0 + 20);
+        }
+    }
+
+    private void generateFood() {
+        while (true) {
+            int x = rand.nextInt(WIDTH / TILE_SIZE);
+            int y = rand.nextInt(HEIGHT / TILE_SIZE);
+            Point p = new Point(x, y);
+            if (!snake.contains(p)) {
+                food = p;
+                break;
+            }
+        }
+    }
+
+    private void loadHighScore() {
+        try {
+            List<String> lines = Files.readAllLines(Paths.get(HIGH_SCORE_FILE));
+            if (!lines.isEmpty()) {
+                highScore = Integer.parseInt(lines.get(0));
+            }
+        } catch (IOException | NumberFormatException ignored) {
+            highScore = 0; // no file or corrupt
+        }
+    }
+
+    private void saveHighScoreIfNeeded() {
+        if (score > highScore) {
+            highScore = score;
+            try (PrintWriter pw = new PrintWriter(new FileWriter(HIGH_SCORE_FILE))) {
+                pw.println(highScore);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void showLeaderboard(Stage owner) {
+        Stage dialog = new Stage();
+        dialog.initOwner(owner);
+        dialog.initModality(Modality.APPLICATION_MODAL);
+        dialog.setTitle("Leaderboard");
+
+        // Create a simple VBox with score info
+        VBox vbox = new VBox(10);
+        vbox.setAlignment(Pos.CENTER);
+        vbox.setStyle("-fx-padding: 20; -fx-background-color: linear-gradient(to bottom right, #0b3d91, #1e90ff);");
+
+        Label title = new Label("Leaderboard (High Scores)");
+        title.setStyle("-fx-font-size: 18px; -fx-text-fill: white;");
+
+        Label hsLabel = new Label("High Score: " + highScore);
+        hsLabel.setStyle("-fx-font-size: 16px; -fx-text-fill: white;");
+
+        Button closeBtn = new Button("Close");
+        closeBtn.setOnAction(e -> dialog.close());
+
+        vbox.getChildren().addAll(title, hsLabel, closeBtn);
+
+        Scene scene = new Scene(vbox, 300, 200);
+        dialog.setScene(scene);
+        dialog.showAndWait();
+    }
+
+    public static void main(String[] args) {
+        launch(args);
+    }
+
+    private static class Point {
+        int x, y;
+        Point(int x, int y) {
+            this.x = x; this.y = y;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (o instanceof Point) {
+                Point p = (Point) o;
+                return this.x == p.x && this.y == p.y;
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return x * 31 + y;
+        }
+    }
+}
